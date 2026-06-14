@@ -12,6 +12,7 @@ from termcolor import colored
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 TEMP_DIR = PROJECT_ROOT / "temp"
+OUTPUT_DIR = PROJECT_ROOT / "output"
 SUBTITLES_DIR = PROJECT_ROOT / "subtitles"
 SONGS_DIR = PROJECT_ROOT / "Songs"
 FONTS_DIR = PROJECT_ROOT / "fonts"

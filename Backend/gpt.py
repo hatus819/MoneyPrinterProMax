@@ -145,6 +145,7 @@ def generate_script(
     ai_model: str,
     voice: str,
     customPrompt: str,
+    min_words: int = 0,
 ) -> Optional[str]:
     """
     Generate a script for a video, depending on the subject of the video, the number of paragraphs, and the AI model.
@@ -193,11 +194,19 @@ def generate_script(
         """
 
     prompt += f"""
-    
+
     Subject: {video_subject}
     Number of paragraphs: {paragraph_number}
     Language: {voice}
 
+    """
+
+    # When a minimum length is requested, instruct the model to keep writing
+    # until it reaches the target word count (drives the final video duration).
+    if min_words and min_words > 0:
+        prompt += f"""
+    The script MUST be at least {min_words} words long. Keep writing engaging,
+    on-topic narration until you reach that length. Do not stop early.
     """
 
     # Generate script
@@ -219,8 +228,12 @@ def generate_script(
         # Split the script into paragraphs
         paragraphs = response.split("\n\n")
 
-        # Select the specified number of paragraphs
-        selected_paragraphs = paragraphs[:paragraph_number]
+        # Select the specified number of paragraphs. When a minimum length is
+        # requested, keep all paragraphs so the script isn't truncated short.
+        if min_words and min_words > 0:
+            selected_paragraphs = paragraphs
+        else:
+            selected_paragraphs = paragraphs[:paragraph_number]
 
         # Join the selected paragraphs into a single string
         final_script = "\n\n".join(selected_paragraphs)
@@ -312,6 +325,27 @@ def get_search_terms(
     return search_terms
 
 
+def _clean_metadata_text(text: str) -> str:
+    """
+    Strip common LLM fluff (preambles, markdown, surrounding quotes) from a
+    short metadata field so titles/descriptions are ready to paste.
+    """
+    text = text.strip()
+
+    # Drop a leading conversational preamble line (e.g. "Here are some options:")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if lines and re.match(r"^(here\b|sure\b|certainly\b)", lines[0].strip(), re.I):
+        lines = lines[1:]
+    text = "\n".join(lines).strip()
+
+    # Remove markdown emphasis/backticks and leading list markers
+    text = re.sub(r"[*`#]+", "", text)
+    text = re.sub(r"^\s*\d+[.)]\s*", "", text)
+    # Strip a single layer of surrounding quotes
+    text = text.strip().strip('"').strip("'").strip()
+    return text
+
+
 def generate_metadata(
     video_subject: str, script: str, ai_model: str
 ) -> Tuple[str, str, List[str]]:
@@ -328,24 +362,92 @@ def generate_metadata(
     """
 
     # Build prompt for title
-    title_prompt = f"""  
-    Generate a catchy and SEO-friendly title for a YouTube shorts video about {video_subject}.  
+    title_prompt = f"""
+    Generate ONE catchy, SEO-friendly title for a YouTube Shorts video about {video_subject}.
+
+    Return ONLY the title text on a single line.
+    Do NOT provide multiple options, numbering, quotes, markdown, labels, or any
+    explanation. Output the title and nothing else.
     """
 
     # Generate title
-    title = generate_response(title_prompt, ai_model).strip()
+    title = _clean_metadata_text(generate_response(title_prompt, ai_model))
 
     # Build prompt for description
-    description_prompt = f"""  
-    Write a brief and engaging description for a YouTube shorts video about {video_subject}.  
-    The video is based on the following script:  
-    {script}  
+    description_prompt = f"""
+    Write ONE brief, engaging description (2-4 sentences) for a YouTube Shorts
+    video about {video_subject}, based on the script below.
+
+    Return ONLY the description text.
+    Do NOT include a preamble, options, quotes, markdown, hashtags, or labels.
+    Output the description and nothing else.
+
+    Script:
+    {script}
     """
 
     # Generate description
-    description = generate_response(description_prompt, ai_model).strip()
+    description = _clean_metadata_text(generate_response(description_prompt, ai_model))
 
     # Generate keywords
     keywords = get_search_terms(video_subject, 6, script, ai_model)
 
     return title, description, keywords
+
+
+def generate_hashtags(
+    video_subject: str, script: str, ai_model: str, amount: int = 10
+) -> List[str]:
+    """
+    Generate discovery-oriented social hashtags for a video topic.
+
+    Args:
+        video_subject (str): The subject of the video.
+        script (str): The script of the video.
+        ai_model (str): The AI model to use for generation.
+        amount (int): How many hashtags to generate.
+
+    Returns:
+        List[str]: Hashtags, each prefixed with '#'.
+    """
+
+    prompt = f"""
+    Generate {amount} relevant, popular hashtags to help a short-form video
+    about "{video_subject}" get discovered on YouTube, TikTok and Instagram.
+
+    Each hashtag must be 1-2 words, lowercase, no spaces, and WITHOUT a
+    leading '#'. Mix specific topic tags with a few broad-reach tags.
+
+    YOU MUST ONLY RETURN A JSON-ARRAY OF STRINGS. NOTHING ELSE.
+    Example: ["oceanfacts", "deepsea", "didyouknow", "shorts", "viral"]
+
+    For context, here is the full script:
+    {script}
+    """
+
+    response = generate_response(prompt, ai_model)
+
+    tags = []
+    try:
+        tags = json.loads(response)
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            raise ValueError("Response is not a list of strings.")
+    except (json.JSONDecodeError, ValueError):
+        match = re.search(r"\[[\s\S]*\]", response)
+        if match:
+            try:
+                tags = json.loads(match.group())
+            except json.JSONDecodeError:
+                tags = []
+        if not tags:
+            tags = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', response)
+
+    # Normalise: strip '#'/spaces/punctuation and re-prefix with a single '#'
+    hashtags = []
+    for tag in tags:
+        cleaned = re.sub(r"[^A-Za-z0-9]", "", str(tag))
+        if cleaned:
+            hashtags.append("#" + cleaned.lower())
+
+    log(f"[+] Generated {len(hashtags)} hashtags: {' '.join(hashtags)}", "info")
+    return hashtags

@@ -3,7 +3,9 @@ import requests
 from typing import List
 from logstream import log
 
-def search_for_stock_videos(query: str, api_key: str, it: int, min_dur: int) -> List[str]:
+def search_for_stock_videos(
+    query: str, api_key: str, it: int, min_dur: int, orientation: str = ""
+) -> List[str]:
     """
     Searches for stock videos based on a query.
 
@@ -20,8 +22,10 @@ def search_for_stock_videos(query: str, api_key: str, it: int, min_dur: int) -> 
         "Authorization": api_key
     }
 
-    # Build URL
+    # Build URL (prefer footage matching the target orientation when provided)
     qurl = f"https://api.pexels.com/videos/search?query={query}&per_page={it}"
+    if orientation:
+        qurl += f"&orientation={orientation}"
 
     # Send the request
     r = requests.get(qurl, headers=headers)

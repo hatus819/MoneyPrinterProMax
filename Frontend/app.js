@@ -325,6 +325,8 @@ async function generateVideo() {
     useMusic: useMusicToggle.checked,
     threads: document.getElementById("threads").value,
     subtitlesPosition: document.getElementById("subtitlesPosition").value,
+    aspectRatio: document.getElementById("aspectRatio").value,
+    minDuration: document.getElementById("minDuration").value,
     customPrompt: customPrompt.value,
     color: subtitlesColor.value,
   };
@@ -385,6 +387,8 @@ const fieldIds = [
   "threads",
   "subtitlesPosition",
   "subtitlesColor",
+  "aspectRatio",
+  "minDuration",
 ];
 
 document.addEventListener("DOMContentLoaded", async () => {

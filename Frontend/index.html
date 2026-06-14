@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MoneyPrinter</title>
+    <title>Money Printer Pro Max</title>
     <link
       rel="icon"
       href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💸</text></svg>"
@@ -109,6 +109,18 @@
         display: inline-block;
         margin-left: 2px;
         font-style: normal;
+      }
+
+      .title-pro {
+        background: linear-gradient(
+          135deg,
+          var(--accent) 0%,
+          var(--accent-hover) 100%
+        );
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: var(--accent);
       }
 
       .subtitle {
@@ -722,7 +734,8 @@
     <main class="container">
       <header class="header">
         <h1 class="title">
-          MoneyPrinter<span class="title-emoji"> 💸</span>
+          Money Printer <span class="title-pro">Pro Max</span
+          ><span class="title-emoji"> 💸</span>
         </h1>
         <p class="subtitle">Automate YouTube Shorts with AI</p>
       </header>
@@ -853,6 +866,19 @@
                 </div>
               </div>
 
+              <!-- Aspect Ratio -->
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="aspectRatio" class="label">Aspect Ratio</label>
+                  <select id="aspectRatio" name="aspectRatio" class="form-select">
+                    <option value="9:16">9:16 &middot; Vertical (Shorts/TikTok)</option>
+                    <option value="16:9">16:9 &middot; Landscape (YouTube)</option>
+                    <option value="1:1">1:1 &middot; Square (Instagram)</option>
+                    <option value="4:5">4:5 &middot; Portrait (Feed)</option>
+                  </select>
+                </div>
+              </div>
+
               <!-- Subtitles Position + Color -->
               <div class="form-grid">
                 <div class="form-group">
@@ -909,7 +935,7 @@
                     id="threads"
                     name="threads"
                     class="form-input"
-                    value="2"
+                    value="6"
                     min="1"
                     max="100"
                   />
@@ -925,6 +951,27 @@
                     value="1"
                     min="1"
                     max="100"
+                  />
+                </div>
+              </div>
+
+              <!-- Minimum Duration -->
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="minDuration" class="label"
+                    >Min Duration
+                    <span class="label-hint"
+                      >&mdash; seconds (0 = use Paragraphs)</span
+                    ></label
+                  >
+                  <input
+                    type="number"
+                    id="minDuration"
+                    name="minDuration"
+                    class="form-input"
+                    value="60"
+                    min="0"
+                    max="600"
                   />
                 </div>
               </div>

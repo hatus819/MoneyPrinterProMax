@@ -1,0 +1,10 @@
+# MoneyPrinter batch topics — one per line.
+# Blank lines and lines starting with '#' are ignored.
+# Optional per-line aspect override:  Some topic | 16:9
+# Run with:  python3 batch_generate.py
+
+3 surprising facts about the deep ocean
+Why do cats purr
+The history of coffee in 60 seconds
+How black holes actually work
+The science of why we dream | 16:9

@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 
@@ -12,12 +13,18 @@ from moviepy import (
 )
 from uuid import uuid4
 
-from gpt import generate_metadata, generate_script, get_search_terms
+from gpt import (
+    generate_hashtags,
+    generate_metadata,
+    generate_script,
+    get_search_terms,
+)
 from logstream import log
 from search import search_for_stock_videos
 from tiktokvoice import tts
 from utils import (
     BASE_DIR,
+    OUTPUT_DIR,
     PROJECT_ROOT,
     SONGS_DIR,
     SUBTITLES_DIR,
@@ -49,9 +56,20 @@ def run_generation_pipeline(
 
     paragraph_number = int(data.get("paragraphNumber", 1))
     ai_model = data.get("aiModel")
-    n_threads = data.get("threads")
-    subtitles_position = data.get("subtitlesPosition")
-    text_color = data.get("color")
+    n_threads = data.get("threads") or 2
+    subtitles_position = data.get("subtitlesPosition") or "center,bottom"
+    text_color = data.get("color") or "#FFFF00"
+
+    # Aspect ratio -> (width, height, Pexels orientation). Default 9:16 vertical.
+    aspect_presets = {
+        "9:16": (1080, 1920, "portrait"),
+        "16:9": (1920, 1080, "landscape"),
+        "1:1": (1080, 1080, "square"),
+        "4:5": (1080, 1350, "portrait"),
+    }
+    target_width, target_height, orientation = aspect_presets.get(
+        data.get("aspectRatio") or "9:16", aspect_presets["9:16"]
+    )
     use_music = data.get("useMusic", False)
     automate_youtube_upload = data.get("automateYoutubeUpload", False)
 
@@ -70,13 +88,65 @@ def run_generation_pipeline(
         voice = "en_us_001"
         voice_prefix = voice[:2]
 
-    script = generate_script(
-        data["videoSubject"],
-        paragraph_number,
-        ai_model,
-        voice,
-        data["customPrompt"],
-    )
+    # Minimum video length (seconds). TikTok TTS speaks ~2.4 words/sec, so we
+    # target a word count with headroom and regenerate if the script is short.
+    min_duration = int(data.get("minDuration") or 0)
+    custom_prompt = data["customPrompt"]
+
+    if min_duration > 0 and not custom_prompt:
+        words_per_second = 2.4
+        accept_words = int(min_duration * words_per_second)
+        target_words = int(accept_words * 1.2)  # ask for ~20% extra as buffer
+        # Cap so a chatty model doesn't produce a 3-minute video for a 60s floor.
+        max_words = int(accept_words * 1.6)
+        script = None
+        for attempt in range(1, 4):
+            guard_cancelled()
+            script = generate_script(
+                data["videoSubject"],
+                paragraph_number,
+                ai_model,
+                voice,
+                custom_prompt,
+                min_words=target_words,
+            )
+            word_count = len((script or "").split())
+            if script and word_count >= accept_words:
+                emit(
+                    f"[+] Script is {word_count} words (~{round(word_count / words_per_second)}s).",
+                    "success",
+                )
+                break
+            emit(
+                f"[i] Script was {word_count} words; need ~{accept_words} for "
+                f"{min_duration}s. Regenerating longer (attempt {attempt}/3)...",
+                "info",
+            )
+            target_words = int(target_words * 1.5)
+
+        # Trim an over-long script back to max_words at a sentence boundary.
+        if script and len(script.split()) > max_words:
+            kept, used = [], 0
+            for sentence in re.split(r"(?<=[.!?])\s+", script.strip()):
+                words_in = len(sentence.split())
+                if used + words_in > max_words and kept:
+                    break
+                kept.append(sentence)
+                used += words_in
+            script = " ".join(kept)
+            emit(
+                f"[i] Trimmed script to {used} words "
+                f"(~{round(used / words_per_second)}s) to cap length.",
+                "info",
+            )
+    else:
+        script = generate_script(
+            data["videoSubject"],
+            paragraph_number,
+            ai_model,
+            voice,
+            custom_prompt,
+        )
 
     if not script:
         raise RuntimeError(
@@ -94,7 +164,7 @@ def run_generation_pipeline(
     for search_term in search_terms:
         guard_cancelled()
         found_urls = search_for_stock_videos(
-            search_term, os.getenv("PEXELS_API_KEY"), it, min_dur
+            search_term, os.getenv("PEXELS_API_KEY"), it, min_dur, orientation
         )
         for url in found_urls:
             if url not in video_urls:
@@ -159,7 +229,12 @@ def run_generation_pipeline(
     temp_audio = AudioFileClip(tts_path)
     try:
         combined_video_path = combine_videos(
-            video_paths, temp_audio.duration, 5, n_threads or 2
+            video_paths,
+            temp_audio.duration,
+            5,
+            n_threads or 2,
+            target_width,
+            target_height,
         )
     finally:
         temp_audio.close()
@@ -172,6 +247,7 @@ def run_generation_pipeline(
             n_threads or 2,
             subtitles_position,
             text_color or "#FFFF00",
+            target_width,
         )
     except Exception as err:
         raise RuntimeError(
@@ -181,12 +257,15 @@ def run_generation_pipeline(
     title, description, keywords = generate_metadata(
         data["videoSubject"], script, ai_model
     )
+    hashtags = generate_hashtags(data["videoSubject"], script, ai_model)
 
     emit("[-] Metadata for YouTube upload:", "info")
     emit("   Title:", "info")
     emit(f"   {title}", "info")
     emit("   Description:", "info")
     emit(f"   {description}", "info")
+    emit("   Hashtags:", "info")
+    emit(f"   {' '.join(hashtags)}", "info")
     emit("   Keywords:", "info")
     emit(f"  {', '.join(keywords)}", "info")
 
@@ -346,6 +425,31 @@ def run_generation_pipeline(
         shutil.copy2(rendered_video_path, final_output_path)
 
     emit(f"[+] Video generated: {final_video_path}!", "success")
+
+    # Persist a uniquely-named copy in the host-mounted output/ folder so
+    # back-to-back jobs don't overwrite each other (temp/ is wiped per run).
+    try:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", data["videoSubject"].lower()).strip("-")[:60]
+        saved_name = f"{slug or 'video'}-{uuid4().hex[:8]}.mp4"
+        saved_path = OUTPUT_DIR / saved_name
+        shutil.copy2(final_output_path, saved_path)
+        emit(f"[+] Saved to output/{saved_name}", "success")
+        final_video_path = f"output/{saved_name}"
+
+        # Write a copy-paste-ready metadata sidecar next to the video.
+        hashtags_line = " ".join(hashtags)
+        sidecar_name = saved_name.rsplit(".", 1)[0] + ".txt"
+        sidecar_text = (
+            f"TITLE\n{title}\n\n"
+            f"DESCRIPTION\n{description}\n\n{hashtags_line}\n\n"
+            f"HASHTAGS\n{hashtags_line}\n\n"
+            f"KEYWORDS / TAGS\n{', '.join(keywords)}\n"
+        )
+        (OUTPUT_DIR / sidecar_name).write_text(sidecar_text, encoding="utf-8")
+        emit(f"[+] Saved metadata to output/{sidecar_name}", "success")
+    except Exception as err:
+        emit(f"[!] Could not copy to output/ folder: {err}", "warning")
 
     if os.name == "nt":
         subprocess.run(

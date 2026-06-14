@@ -1,88 +1,196 @@
-# MoneyPrinter 💸
+# Money Printer Pro Max 💸 — Automated Short-Video Generator
 
-Sponsored by Post Bridge
+**English** | [Português (Brasil)](README.pt-BR.md)
 
-<a href="https://www.post-bridge.com/?ref=moneyprinter">
-  <img src="docs/repo/PostBridgeBanner.png" alt="Post Bridge integration banner" width="720" />
-</a>
+Turn a text topic into a finished, captioned vertical (or landscape) short video — script, voiceover, stock footage, subtitles, and ready-to-paste metadata, all generated automatically.
+
+This is an enhanced fork of [FujiwaraChoki/MoneyPrinter](https://github.com/FujiwaraChoki/MoneyPrinter) with several added features (see [Features](#-features)).
+
+> ⚠️ **It does not upload anywhere for you.** Each video is saved as a file you publish yourself. See [Important notes](#-important-notes).
 
 ---
 
-> 𝕏 Also, follow me on X: [@DevBySami](https://x.com/DevBySami).
+## ✨ Features
 
-Automate the creation of YouTube Shorts by providing a video topic.
+- **Topic → full video** using a local LLM (Ollama) for the script — no paid AI API required.
+- **Multiple aspect ratios**: `9:16` (Shorts/TikTok/Reels), `16:9` (YouTube), `1:1` (Instagram), `4:5` (feed).
+- **Minimum video length** control — guarantee videos are at least N seconds (e.g. 60s).
+- **Auto-generated metadata** — every video gets a `.txt` with a Title, Description, Hashtags, and Keywords, ready to paste when you publish.
+- **Accurate captions** via AssemblyAI (optional) or local timing.
+- **Batch mode** — queue a whole list of topics from a text file and walk away.
+- **Persistent output** — every video is saved with a unique name in `output/` so jobs never overwrite each other.
+- **Reliable queue** — a database-backed job queue (Postgres) with a separate worker, so it survives restarts.
 
-MoneyPrinter is Ollama-first: script generation and metadata are fully powered by local Ollama models.
+## 🧱 How it works
 
-MoneyPrinter now uses a DB-backed generation queue (API + worker + Postgres in Docker) for reliable, restart-safe processing.
-
-<a href="https://trendshift.io/repositories/7545" target="_blank"><img src="https://trendshift.io/api/badge/repositories/7545" alt="FujiwaraChoki%2FMoneyPrinter | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-
-> **Important** Please make sure you look through existing/closed issues before opening your own. If it's just a question, please join our [discord](https://dsc.gg/fuji-community) and ask there.
-
-> **🎥** Watch the video on [YouTube](https://youtu.be/mkZsaDA2JnA?si=pNne3MnluRVkWQbE).
-
-## Documentation
-
-Docs are centralized in [`docs/`](docs/README.md):
-
-- [Interactive Setup Script](setup.sh)
-- [Quickstart](docs/quickstart.md)
-- [Configuration](docs/configuration.md)
-- [Architecture](docs/architecture.md)
-- [Docker](docs/docker.md)
-- [Testing](docs/testing.md)
-- [Troubleshooting](docs/troubleshooting.md)
-
-## FAQ 🤔
-
-### Which AI provider does MoneyPrinter use?
-
-MoneyPrinter is fully Ollama-based. Start Ollama, pull a model, and select the model in the UI.
-
-```bash
-ollama serve
-ollama pull llama3.1:8b
+```
+Your topic → Ollama (script) → Pexels (stock footage) → TikTok TTS (voiceover)
+          → subtitles → video assembly (9:16/16:9/…) → output/<name>.mp4 + <name>.txt
 ```
 
-### How do I get the TikTok session ID?
+Components run in Docker: a **frontend** (web UI), a **backend** API, a **worker** that renders videos, and **Postgres** for the queue. **Ollama** runs on your host machine.
 
-You can obtain your TikTok session ID by logging into TikTok in your browser and copying the value of the `sessionid` cookie.
+---
 
-### My ImageMagick binary is not being detected
+## ✅ Prerequisites
 
-MoneyPrinter auto-detects ImageMagick from your `PATH` on Linux, macOS, and Windows. If auto-detection fails, set the executable path manually in `.env`, for example:
+| Tool | Why | Notes |
+|---|---|---|
+| **Docker + Docker Compose** | Runs the whole stack | [Install Docker](https://docs.docker.com/get-docker/) |
+| **Ollama** | Generates the script locally | [Install Ollama](https://ollama.com/download) |
+| **Pexels API key** | Stock footage (free) | https://www.pexels.com/api/ |
+| **TikTok `sessionid`** | Text-to-speech voice (free) | From your browser cookies on tiktok.com |
+| **AssemblyAI API key** | *Optional* — better caption timing (free tier) | https://www.assemblyai.com/ |
+
+> ImageMagick and FFmpeg are **already included** in the Docker image — you don't need to install them.
+
+---
+
+## 🚀 Setup
+
+### 1. Clone and configure
+
+```bash
+git clone <your-repo-url> MoneyPrinter
+cd MoneyPrinter
+cp .env.example .env
+```
+
+Edit `.env` and fill in:
 
 ```env
-IMAGEMAGICK_BINARY="C:\\Program Files\\ImageMagick-7.1.0-Q16\\magick.exe"
+PEXELS_API_KEY="your_pexels_key"
+TIKTOK_SESSION_ID="your_tiktok_sessionid"
+ASSEMBLY_AI_API_KEY=""          # optional, for better captions
+
+# Lets the Docker containers reach Ollama running on your host:
+OLLAMA_BASE_URL="http://host.docker.internal:11434"
+OLLAMA_MODEL="llama3.1:8b"
 ```
 
-Don't forget to use double backslashes (`\\`) in the path, instead of one.
+**How to get the keys:**
+- **Pexels:** sign up at https://www.pexels.com/api/ → copy "Your API Key".
+- **TikTok `sessionid`:** log in at tiktok.com → open DevTools (`F12` / `Cmd+Opt+I`) → **Application → Cookies → tiktok.com** → copy the value of the `sessionid` cookie.
 
-### I can't install `playsound`: Wheel failed to build
+### 2. Start Ollama (on your host)
 
-If you're having trouble installing `playsound`, you can try installing it using the following command:
+Ollama must listen on all interfaces so the Docker containers can reach it:
 
 ```bash
-uv pip install -U wheel
-uv pip install -U playsound
+OLLAMA_HOST=0.0.0.0:11434 ollama serve     # leave this running in one terminal
+ollama pull llama3.1:8b                     # in another terminal, once
 ```
 
-If you were not able to find your solution, check [Troubleshooting](docs/troubleshooting.md), ask in Discord, or create an issue.
+> 🔒 Binding Ollama to `0.0.0.0` exposes it on your local network. That's required for Docker → host access. On a trusted machine this is fine; otherwise restrict it with your firewall.
 
-## Donate 🎁
+### 3. Start the app
 
-If you like and enjoy `MoneyPrinter`, and would like to donate, you can do that by clicking on the button on the right hand side of the repository. ❤️
-You will have your name (and/or logo) added to this repository as a supporter as a sign of appreciation.
+```bash
+docker compose up -d --build
+```
 
-## Contributing 🤝
+The **first build takes a few minutes** (it compiles ImageMagick). After it's up:
 
-Pull Requests will not be accepted for the time-being.
+- **Web UI:** http://localhost:8001
+- **Backend API:** http://localhost:8080
 
-## Star History 🌟
+To stop: `docker compose down`.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=FujiwaraChoki/MoneyPrinter&type=Date)](https://star-history.com/#FujiwaraChoki/MoneyPrinter&Date)
+---
 
-## License 📝
+## 🎬 Usage
 
-See [`LICENSE`](LICENSE) file for more information.
+### Option A — Web UI (single video)
+
+1. Open http://localhost:8001
+2. Enter a **video subject**.
+3. Expand the options and set:
+   - **Aspect Ratio** — 9:16 / 16:9 / 1:1 / 4:5
+   - **Min Duration** — minimum length in seconds (e.g. `60`; set `0` to use the Paragraphs count instead)
+   - **Subtitle position / color**, **Threads** (render speed), etc.
+4. Pick the **Ollama model** from the dropdown.
+5. Click **Generate** and watch the live log.
+6. The finished video + its metadata appear in the [`output/`](output/) folder.
+
+### Option B — Batch mode (many videos)
+
+Edit `topics.txt` (one topic per line) and run:
+
+```bash
+python3 batch_generate.py
+```
+
+`topics.txt` format:
+
+```text
+# Lines starting with '#' are ignored
+3 surprising facts about the deep ocean
+The history of coffee in 60 seconds
+The science of why we dream | 16:9      # optional per-line aspect override
+```
+
+Useful flags:
+
+```bash
+python3 batch_generate.py mytopics.txt \
+  --aspect 16:9 \          # default aspect for all lines
+  --min-duration 60 \      # minimum seconds per video
+  --threads 6 \            # render threads
+  --voice en_us_001 \
+  --wait                   # wait for each to finish (shows result paths)
+```
+
+Videos are queued and rendered **one at a time** in the background — close your laptop and come back to a full `output/` folder.
+
+---
+
+## 📁 Output
+
+Each generated video produces two files in `output/`:
+
+```
+the-history-of-coffee-6517a129.mp4   ← the video
+the-history-of-coffee-6517a129.txt   ← TITLE / DESCRIPTION / HASHTAGS / KEYWORDS
+```
+
+Open the `.txt` and copy-paste the title, description, and hashtags when you publish.
+
+---
+
+## ⚙️ Configuration reference (`.env`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `PEXELS_API_KEY` | ✅ | Pexels stock-video API key |
+| `TIKTOK_SESSION_ID` | ✅ | TikTok `sessionid` cookie (for TTS voice) |
+| `OLLAMA_BASE_URL` | ✅ (Docker) | `http://host.docker.internal:11434` so containers reach host Ollama |
+| `OLLAMA_MODEL` | – | Fallback model (default `llama3.1:8b`) |
+| `ASSEMBLY_AI_API_KEY` | – | Optional; enables AssemblyAI captions |
+| `IMAGEMAGICK_BINARY` | – | Leave empty (handled inside Docker) |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | – | Postgres defaults |
+| `DATABASE_URL` | – | Leave empty to use the bundled Postgres |
+
+---
+
+## 🛠️ Troubleshooting
+
+- **UI shows no models / "could not connect to Ollama":** make sure Ollama is running with `OLLAMA_HOST=0.0.0.0:11434` and that `OLLAMA_BASE_URL` in `.env` is `http://host.docker.internal:11434`. Test: `curl http://localhost:8080/api/models`.
+- **A render fails at the end / captions error:** usually a subtitle/timing edge case — try a different topic or set an `ASSEMBLY_AI_API_KEY`.
+- **Voiceover fails:** TikTok TTS is region-sensitive; refresh your `TIKTOK_SESSION_ID` (it expires) or use a US-based session.
+- **Renders are slow:** longer videos take longer — the bottleneck is burning subtitles frame-by-frame, so render time scales with video length more than with `Threads`.
+- **Check the queue / logs:** `docker compose logs -f worker`.
+
+---
+
+## 📝 Important notes
+
+- **No automatic uploading.** The app produces a file; you publish it manually. Automated uploading to TikTok via session cookies violates their Terms of Service and risks account bans, so it is intentionally not included.
+- **Content quality & platform rules.** Platforms increasingly limit mass-produced, repetitive AI content. Lean into a specific niche and vary your format.
+- **Voice quality.** The built-in TikTok TTS is robotic. For production quality, consider integrating a licensed TTS provider.
+
+---
+
+## 🙏 Credits & License
+
+- Based on [FujiwaraChoki/MoneyPrinter](https://github.com/FujiwaraChoki/MoneyPrinter).
+- Licensed under the **MIT License** — see [`LICENSE`](LICENSE). You are free to use, modify, and distribute, including commercially.

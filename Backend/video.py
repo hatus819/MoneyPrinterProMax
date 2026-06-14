@@ -160,7 +160,12 @@ def generate_subtitles(
 
 
 def combine_videos(
-    video_paths: List[str], max_duration: int, max_clip_duration: int, threads: int
+    video_paths: List[str],
+    max_duration: int,
+    max_clip_duration: int,
+    threads: int,
+    target_width: int = 1080,
+    target_height: int = 1920,
 ) -> str:
     """
     Combines a list of videos into one video and returns the path to the combined video.
@@ -218,23 +223,24 @@ def combine_videos(
                 clip = clip.subclipped(0, target_duration)
             clip = clip.with_fps(30)
 
-            # Not all videos are same size,
-            # so we need to resize them
-            if round((clip.w / clip.h), 4) < 0.5625:
+            # Not all videos are same size, so we crop them to the target
+            # aspect ratio (center crop) then resize to the target resolution.
+            target_ratio = target_width / target_height
+            if round((clip.w / clip.h), 4) < target_ratio:
                 clip = clip.cropped(
                     width=clip.w,
-                    height=round(clip.w / 0.5625),
+                    height=round(clip.w / target_ratio),
                     x_center=clip.w / 2,
                     y_center=clip.h / 2,
                 )
             else:
                 clip = clip.cropped(
-                    width=round(0.5625 * clip.h),
+                    width=round(target_ratio * clip.h),
                     height=clip.h,
                     x_center=clip.w / 2,
                     y_center=clip.h / 2,
                 )
-            clip = clip.resized(new_size=(1080, 1920))
+            clip = clip.resized(new_size=(target_width, target_height))
 
             clips.append(clip)
             tot_dur += clip.duration
@@ -272,6 +278,7 @@ def generate_video(
     threads: int,
     subtitles_position: str,
     text_color: str,
+    target_width: int = 1080,
 ) -> str:
     """
     This function creates the final video, with subtitles and audio.
@@ -287,14 +294,19 @@ def generate_video(
         str: The path to the final video.
     """
     # Make a generator that returns a TextClip when called with consecutive
+    # Scale caption size with the frame width (100px is tuned for 1080-wide
+    # video) so wider formats like 16:9 get proportionally larger subtitles.
     font_path = str((FONTS_DIR / "bold_font.ttf").resolve())
+    scale = target_width / 1080
+    font_size = round(100 * scale)
+    stroke_width = max(1, round(5 * scale))
     generator = lambda txt: TextClip(
         font=font_path,
         text=txt,
-        font_size=100,
+        font_size=font_size,
         color=text_color,
         stroke_color="black",
-        stroke_width=5,
+        stroke_width=stroke_width,
     )
 
     # Split the subtitles position into horizontal and vertical
